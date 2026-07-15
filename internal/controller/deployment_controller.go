@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -54,10 +55,10 @@ func (r *DeploymentReconciler) constructServiceForDeployment(ctx context.Context
 		ObjectMeta: ctrl.ObjectMeta{
 			Name:      fmt.Sprintf(PORT_SERVICE_NAME, port),
 			Namespace: deploy.Namespace,
-			Labels:    map[string]string{},
-			Annotations: map[string]string{
+			Labels: map[string]string{
 				SERVICE_TAG: "true",
 			},
+			Annotations: map[string]string{},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: deploy.Spec.Selector.MatchLabels,
@@ -82,7 +83,20 @@ func (r *DeploymentReconciler) constructServiceForDeployment(ctx context.Context
 }
 
 func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, startPort, endPort int32) (int32, error) {
-	return 9618, nil
+	var services corev1.ServiceList
+	if err := r.List(ctx, &services, client.MatchingLabels{PORT_TAG: "true"}); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list Services")
+		return 0, err
+	}
+	for port := startPort; port <= endPort; port++ {
+		inUse := slices.ContainsFunc(services.Items, func(s corev1.Service) bool {
+			return s.Spec.Ports[0].Port == port
+		})
+		if !inUse {
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("No open ports on range [%v, %v]", startPort, endPort)
 }
 
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
