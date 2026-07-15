@@ -31,18 +31,19 @@ spec:
         app.kubernetes.io/name: fleet-manager
     spec:
       securityContext:
-        runAsNonRoot: true
+        # runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
-      - image: controller:latest
+      - image: hub.osg-htc.org/mwestphall/fleet-manager:latest
+        imagePullPolicy: Never
         name: manager
         securityContext:
-          readOnlyRootFilesystem: true
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - "ALL"
+          # readOnlyRootFilesystem: true
+          # allowPrivilegeEscalation: false
+          # capabilities:
+          #   drop:
+          #   - "ALL"
         resources:
           limits:
             cpu: 500m
