@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -73,7 +74,7 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 						Name:      namespacedName.Name,
 						Namespace: namespacedName.Namespace,
 						Annotations: map[string]string{
-							"chtc.wisc.edu/personal-ap": "true",
+							AP_TAG: "true",
 						},
 					},
 					Spec: deploySpec,
@@ -103,6 +104,26 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("Checking if the Deployment has been annotated with a port")
+			updatedDeployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, namespacedName, updatedDeployment)
+			Expect(err).NotTo(HaveOccurred())
+			portAnnotation, exists := updatedDeployment.Annotations[PORT_TAG]
+			Expect(exists).To(BeTrue())
+			Expect(portAnnotation).NotTo(BeEmpty())
+
+			By("Checking if the corresponding Service has been created")
+			expectedService := &corev1.Service{}
+			svcName := types.NamespacedName{
+				Name:      fmt.Sprintf(PORT_SERVICE_NAME, portAnnotation),
+				Namespace: updatedDeployment.Namespace,
+			}
+			err = k8sClient.Get(ctx, svcName, expectedService)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking that the deployment and service select on the same pods")
+			Expect(updatedDeployment.Spec.Selector.MatchLabels).To(Equal(expectedService.Spec.Selector))
 		})
 	})
 })

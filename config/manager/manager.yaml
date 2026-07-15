@@ -38,6 +38,11 @@ spec:
       - image: hub.osg-htc.org/mwestphall/fleet-manager:latest
         imagePullPolicy: Never
         name: manager
+        env:
+        - name: PORT_ALLOCATION_MIN
+          value: "9618"
+        - name: PORT_ALLOCATION_MAX
+          value: "9628"
         securityContext:
           # readOnlyRootFilesystem: true
           # allowPrivilegeEscalation: false
