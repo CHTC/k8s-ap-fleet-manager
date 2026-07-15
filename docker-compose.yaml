@@ -1,0 +1,6 @@
+services:
+  fleet-manager:
+    image: hub.osg-htc.org/mwestphall/fleet-manager:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
