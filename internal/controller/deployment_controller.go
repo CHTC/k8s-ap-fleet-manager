@@ -28,6 +28,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	traefikv1alpha1 "github.com/chtc/fleet-manager/internal/traefik/v1alpha1"
 )
 
 // DeploymentReconciler reconciles a Deployment object
@@ -48,6 +50,9 @@ const SERVICE_TAG = "chtc.wisc.edu/ap-clusterip-service"
 // To get atomicity on created Service port allocations, name the service after their port
 // to trigger name collisions on double allocation
 const PORT_SERVICE_NAME = "ap-port-%v"
+
+// Name (and entryPoint) given to the IngressRouteTCP created for a personal AP's port
+const INGRESS_ROUTE_TCP_NAME = "personal-ap-%v"
 
 func (r *DeploymentReconciler) constructServiceForDeployment(ctx context.Context, deploy *appsv1.Deployment, port int32) (*corev1.Service, error) {
 	// Base service spec: target the deployment's pods using its template labels, and expose the specified port
@@ -80,6 +85,40 @@ func (r *DeploymentReconciler) constructServiceForDeployment(ctx context.Context
 	}
 
 	return svc, nil
+}
+
+func (r *DeploymentReconciler) constructIngressRouteTCPForDeployment(ctx context.Context, deploy *appsv1.Deployment, port int32) (*traefikv1alpha1.IngressRouteTCP, error) {
+	name := fmt.Sprintf(INGRESS_ROUTE_TCP_NAME, port)
+
+	// Route all TCP traffic on this port's dedicated entryPoint to the Service already
+	// created for the deployment on that same port.
+	route := &traefikv1alpha1.IngressRouteTCP{
+		ObjectMeta: ctrl.ObjectMeta{
+			Name:      name,
+			Namespace: deploy.Namespace,
+		},
+		Spec: traefikv1alpha1.IngressRouteTCPSpec{
+			EntryPoints: []string{name},
+			Routes: []traefikv1alpha1.RouteTCP{
+				{
+					Match: "HostSNI(`*`)",
+					Services: []traefikv1alpha1.ServiceTCP{
+						{
+							Name: fmt.Sprintf(PORT_SERVICE_NAME, port),
+							Port: port,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(deploy, route, r.Scheme); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to set controller reference for IngressRouteTCP")
+		return nil, err
+	}
+
+	return route, nil
 }
 
 func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, namespace string, startPort, endPort int32) (int32, error) {
@@ -152,6 +191,18 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Create the Service in the cluster
 	if err := r.Create(ctx, svc); err != nil {
 		logger.Error(err, "Failed to create Service for Deployment")
+		return ctrl.Result{}, err
+	}
+
+	route, err := r.constructIngressRouteTCPForDeployment(ctx, deploy, newPort)
+	if err != nil {
+		logger.Error(err, "Failed to construct IngressRouteTCP for Deployment")
+		return ctrl.Result{}, err
+	}
+
+	// Create the IngressRouteTCP in the cluster
+	if err := r.Create(ctx, route); err != nil {
+		logger.Error(err, "Failed to create IngressRouteTCP for Deployment")
 		return ctrl.Result{}, err
 	}
 

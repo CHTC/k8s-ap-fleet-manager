@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/chtc/fleet-manager/internal/controller"
+	traefikv1alpha1 "github.com/chtc/fleet-manager/internal/traefik/v1alpha1"
 )
 
 var (
@@ -39,6 +40,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(traefikv1alpha1.AddToScheme(scheme))
 }
 
 func main() {
