@@ -8,12 +8,8 @@ namespace: fleet-manager-system
 # field above.
 namePrefix: fleet-manager-
 
-# Labels to add to all resources and selectors.
-#labels:
-#- includeSelectors: true
-#  pairs:
-#    someName: someValue
-
 resources:
-- ../rbac
-- ../manager
+- manager.yaml
+- service_account.yaml
+- role.yaml
+- role_binding.yaml
