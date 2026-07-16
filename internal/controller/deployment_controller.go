@@ -23,6 +23,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -44,8 +45,11 @@ const AP_TAG = "chtc.wisc.edu/personal-ap"
 // Annotation set by the controller on deployments that have been assigned a port
 const PORT_TAG = "chtc.wisc.edu/ap-port"
 
-// Annotation set by the controller on created clusterIP services
+// Label set by the controller on created clusterIP services
 const SERVICE_TAG = "chtc.wisc.edu/ap-clusterip-service"
+
+// Label set by the controller on created IngressRouteTCPs
+const INGRESSROUTETCP_TAG = "chtc.wisc.edu/ap-ingressroutetcp"
 
 // To get atomicity on created Service port allocations, name the service after their port
 // to trigger name collisions on double allocation
@@ -96,6 +100,9 @@ func (r *DeploymentReconciler) constructIngressRouteTCPForDeployment(ctx context
 		ObjectMeta: ctrl.ObjectMeta{
 			Name:      name,
 			Namespace: deploy.Namespace,
+			Labels: map[string]string{
+				INGRESSROUTETCP_TAG: "true",
+			},
 		},
 		Spec: traefikv1alpha1.IngressRouteTCPSpec{
 			EntryPoints: []string{name},
@@ -121,7 +128,7 @@ func (r *DeploymentReconciler) constructIngressRouteTCPForDeployment(ctx context
 	return route, nil
 }
 
-func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, namespace string, startPort, endPort int32) (int32, error) {
+func (r *DeploymentReconciler) listServices(ctx context.Context, namespace string) ([]corev1.Service, error) {
 	var services corev1.ServiceList
 	if err := r.List(
 		ctx,
@@ -130,10 +137,28 @@ func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, namespace str
 		client.InNamespace(namespace),
 	); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list Services")
-		return 0, err
+		return nil, err
 	}
+	return services.Items, nil
+}
+
+func (r *DeploymentReconciler) listIngressRouteTCPs(ctx context.Context, namespace string) ([]traefikv1alpha1.IngressRouteTCP, error) {
+	var routes traefikv1alpha1.IngressRouteTCPList
+	if err := r.List(
+		ctx,
+		&routes,
+		client.MatchingLabels{INGRESSROUTETCP_TAG: "true"},
+		client.InNamespace(namespace),
+	); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list IngressRouteTCPs")
+		return nil, err
+	}
+	return routes.Items, nil
+}
+
+func findUnusedPort(services []corev1.Service, startPort, endPort int32) (int32, error) {
 	for port := startPort; port <= endPort; port++ {
-		inUse := slices.ContainsFunc(services.Items, func(s corev1.Service) bool {
+		inUse := slices.ContainsFunc(services, func(s corev1.Service) bool {
 			return s.Spec.Ports[0].Port == port
 		})
 		if !inUse {
@@ -141,6 +166,32 @@ func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, namespace str
 		}
 	}
 	return 0, fmt.Errorf("No open ports on range [%v, %v]", startPort, endPort)
+}
+
+func findServiceOwnedByDeployment(services []corev1.Service, deployName string) (*corev1.Service, bool) {
+	idx := slices.IndexFunc(services, func(s corev1.Service) bool {
+		return slices.ContainsFunc(s.GetOwnerReferences(), func(o v1.OwnerReference) bool {
+			return o.Kind == "Deployment" && o.Name == deployName
+		})
+	})
+
+	if idx == -1 {
+		return nil, false
+	}
+	return &services[idx], true
+}
+
+func findIngressRouteOwnedByDeployment(ingresses []traefikv1alpha1.IngressRouteTCP, deployName string) (*traefikv1alpha1.IngressRouteTCP, bool) {
+	idx := slices.IndexFunc(ingresses, func(i traefikv1alpha1.IngressRouteTCP) bool {
+		return slices.ContainsFunc(i.GetOwnerReferences(), func(o v1.OwnerReference) bool {
+			return o.Kind == "Deployment" && o.Name == deployName
+		})
+	})
+
+	if idx == -1 {
+		return nil, false
+	}
+	return &ingresses[idx], true
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -175,41 +226,68 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
-	// find an unused port for the deployment
-	newPort, err := r.findUnusedPort(ctx, req.Namespace, 9618, 9628)
+	// Check if a Service already exists for this Deployment
+	services, err := r.listServices(ctx, req.Namespace)
 	if err != nil {
-		logger.Error(err, "Failed to find an unused port for Deployment")
+		logger.Error(err, "Failed to list Services")
 		return ctrl.Result{}, err
 	}
 
-	svc, err := r.constructServiceForDeployment(ctx, deploy, newPort)
+	svc, found := findServiceOwnedByDeployment(services, deploy.Name)
+	if !found {
+		logger.Info("Service does not yet exist for Deployment, attempting to create")
+
+		// find an unused port for the deployment
+		newPort, err := findUnusedPort(services, 9618, 9628)
+		if err != nil {
+			logger.Error(err, "Failed to find an unused port for Deployment")
+			return ctrl.Result{}, err
+		}
+
+		svc, err = r.constructServiceForDeployment(ctx, deploy, newPort)
+		if err != nil {
+			logger.Error(err, "Failed to construct Service for Deployment")
+			return ctrl.Result{}, err
+		}
+
+		// Create the Service in the cluster
+		if err := r.Create(ctx, svc); err != nil {
+			logger.Error(err, "Failed to create Service for Deployment")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Key remaining port-facing actions based on the service's chosen port
+	svcPort := svc.Spec.Ports[0].Port
+
+	// Check if an IngressRouteTCP already exists for this Deployment
+	ingressRoutes, err := r.listIngressRouteTCPs(ctx, req.Namespace)
 	if err != nil {
-		logger.Error(err, "Failed to construct Service for Deployment")
+		logger.Error(err, "Failed to list IngressRouteTCPs")
 		return ctrl.Result{}, err
 	}
 
-	// Create the Service in the cluster
-	if err := r.Create(ctx, svc); err != nil {
-		logger.Error(err, "Failed to create Service for Deployment")
-		return ctrl.Result{}, err
-	}
+	_, found = findIngressRouteOwnedByDeployment(ingressRoutes, req.Name)
+	if !found {
+		// Create a new IngressRouteTCP for the Deployment
+		route, err := r.constructIngressRouteTCPForDeployment(ctx, deploy, svcPort)
+		if err != nil {
+			logger.Error(err, "Failed to construct IngressRouteTCP for Deployment")
+			return ctrl.Result{}, err
+		}
 
-	route, err := r.constructIngressRouteTCPForDeployment(ctx, deploy, newPort)
-	if err != nil {
-		logger.Error(err, "Failed to construct IngressRouteTCP for Deployment")
-		return ctrl.Result{}, err
-	}
+		// Create the IngressRouteTCP in the cluster
+		if err := r.Create(ctx, route); err != nil {
+			logger.Error(err, "Failed to create IngressRouteTCP for Deployment")
+			return ctrl.Result{}, err
+		}
 
-	// Create the IngressRouteTCP in the cluster
-	if err := r.Create(ctx, route); err != nil {
-		logger.Error(err, "Failed to create IngressRouteTCP for Deployment")
-		return ctrl.Result{}, err
 	}
 
 	// Annotate the Deployment with the assigned port
 	// TODO this isn't atomic, we can create the port and then fail to annotate the deployment
 	patch := client.MergeFrom(deploy.DeepCopy())
-	deploy.Annotations[PORT_TAG] = fmt.Sprintf("%d", newPort)
+	deploy.Annotations[PORT_TAG] = fmt.Sprintf("%d", svcPort)
 	if err := r.Patch(ctx, deploy, patch); err != nil {
 		logger.Error(err, "Failed to annotate Deployment with assigned port")
 		return ctrl.Result{}, err
