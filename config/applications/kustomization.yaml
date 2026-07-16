@@ -1,0 +1,5 @@
+namespace: applications
+resources:
+  - namespace.yaml
+  - deployment-1.yaml
+  - deployment-2.yaml

@@ -82,9 +82,14 @@ func (r *DeploymentReconciler) constructServiceForDeployment(ctx context.Context
 	return svc, nil
 }
 
-func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, startPort, endPort int32) (int32, error) {
+func (r *DeploymentReconciler) findUnusedPort(ctx context.Context, namespace string, startPort, endPort int32) (int32, error) {
 	var services corev1.ServiceList
-	if err := r.List(ctx, &services, client.MatchingLabels{PORT_TAG: "true"}); err != nil {
+	if err := r.List(
+		ctx,
+		&services,
+		client.MatchingLabels{SERVICE_TAG: "true"},
+		client.InNamespace(namespace),
+	); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list Services")
 		return 0, err
 	}
@@ -132,7 +137,7 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// find an unused port for the deployment
-	newPort, err := r.findUnusedPort(ctx, 9618, 9628)
+	newPort, err := r.findUnusedPort(ctx, req.Namespace, 9618, 9628)
 	if err != nil {
 		logger.Error(err, "Failed to find an unused port for Deployment")
 		return ctrl.Result{}, err
@@ -152,8 +157,9 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Annotate the Deployment with the assigned port
 	// TODO this isn't atomic, we can create the port and then fail to annotate the deployment
+	patch := client.MergeFrom(deploy.DeepCopy())
 	deploy.Annotations[PORT_TAG] = fmt.Sprintf("%d", newPort)
-	if err := r.Update(ctx, deploy); err != nil {
+	if err := r.Patch(ctx, deploy, patch); err != nil {
 		logger.Error(err, "Failed to annotate Deployment with assigned port")
 		return ctrl.Result{}, err
 	}

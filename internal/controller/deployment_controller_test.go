@@ -27,30 +27,42 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var deploySpec = appsv1.DeploymentSpec{
-	Selector: &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"app": "example-deployment",
-		},
-	},
-	Template: corev1.PodTemplateSpec{
+func makeDeployment(namespacedName types.NamespacedName) *appsv1.Deployment {
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				"app": "example-deployment",
+			Name:      namespacedName.Name,
+			Namespace: namespacedName.Namespace,
+			Annotations: map[string]string{
+				AP_TAG: "true",
 			},
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:  "nginx",
-					Image: "nginx:latest",
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": namespacedName.Name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": namespacedName.Name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "nginx",
+							Image: "nginx:latest",
+						},
+					},
 				},
 			},
 		},
-	},
+	}
 }
 
 var _ = Describe("Deployment Controller", Ordered, func() {
@@ -63,24 +75,21 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 			Namespace: "default",
 		}
 
+		namespacedName2 := types.NamespacedName{
+			Name:      "example-deployment-2",
+			Namespace: "default",
+		}
+
 		deployment := &appsv1.Deployment{}
 		BeforeAll(func() {
-			By("Creating an annotated Deployment")
+			By("Creating two annotated Deployments")
 
 			err := k8sClient.Get(ctx, namespacedName, deployment)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &appsv1.Deployment{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      namespacedName.Name,
-						Namespace: namespacedName.Namespace,
-						Annotations: map[string]string{
-							AP_TAG: "true",
-						},
-					},
-					Spec: deploySpec,
-				}
-
+				resource := makeDeployment(namespacedName)
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				resource2 := makeDeployment(namespacedName2)
+				Expect(k8sClient.Create(ctx, resource2)).To(Succeed())
 			}
 		})
 
@@ -93,7 +102,7 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should successfully reconcile the resource", func() {
+		It("should successfully reconcile the first resource", func() {
 			reconciler := &DeploymentReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -102,8 +111,6 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 				NamespacedName: namespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
 
 			By("Checking if the Deployment has been annotated with a port")
 			updatedDeployment := &appsv1.Deployment{}
@@ -124,6 +131,28 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 
 			By("Checking that the deployment and service select on the same pods")
 			Expect(updatedDeployment.Spec.Selector.MatchLabels).To(Equal(expectedService.Spec.Selector))
+		})
+
+		It("Should successfully reconcile the second resource on a different port", func() {
+			reconciler := &DeploymentReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: namespacedName2,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking that two services now exist")
+			var services corev1.ServiceList
+			err = k8sClient.List(
+				ctx,
+				&services,
+				client.MatchingLabels{SERVICE_TAG: "true"},
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(services.Items).To(HaveLen(2))
+			Expect(services.Items[0].Spec.Ports[0].Port).NotTo(Equal(services.Items[1].Spec.Ports[0].Port))
 		})
 	})
 })
