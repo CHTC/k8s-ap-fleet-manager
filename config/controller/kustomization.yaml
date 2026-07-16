@@ -9,6 +9,7 @@ namespace: fleet-manager-system
 namePrefix: fleet-manager-
 
 resources:
+- ../crds
 - namespace.yaml
 - manager.yaml
 - service_account.yaml

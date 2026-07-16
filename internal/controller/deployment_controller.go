@@ -194,6 +194,71 @@ func findIngressRouteOwnedByDeployment(ingresses []traefikv1alpha1.IngressRouteT
 	return &ingresses[idx], true
 }
 
+func (r *DeploymentReconciler) setupService(ctx context.Context, deploy *appsv1.Deployment) (svc *corev1.Service, err error) {
+	logger := logf.FromContext(ctx)
+	// Check if a Service already exists for this Deployment
+	services, err := r.listServices(ctx, deploy.Namespace)
+	if err != nil {
+		logger.Error(err, "Failed to list Services")
+		return
+	}
+
+	if svc, found := findServiceOwnedByDeployment(services, deploy.Name); found {
+		return svc, nil
+	}
+
+	logger.Info("Service does not yet exist for Deployment, attempting to create")
+
+	// find an unused port for the deployment
+	newPort, err := findUnusedPort(services, 9618, 9628)
+	if err != nil {
+		logger.Error(err, "Failed to find an unused port for Deployment")
+		return
+	}
+
+	svc, err = r.constructServiceForDeployment(ctx, deploy, newPort)
+	if err != nil {
+		logger.Error(err, "Failed to construct Service for Deployment")
+		return
+	}
+
+	// Create the Service in the cluster
+	if err = r.Create(ctx, svc); err != nil {
+		logger.Error(err, "Failed to create Service for Deployment")
+		return
+	}
+
+	return
+}
+
+func (r *DeploymentReconciler) setupIngressRouteTCP(ctx context.Context, deploy *appsv1.Deployment, port int32) (route *traefikv1alpha1.IngressRouteTCP, err error) {
+	logger := logf.FromContext(ctx)
+	// Check if an IngressRouteTCP already exists for this Deployment
+	ingressRoutes, err := r.listIngressRouteTCPs(ctx, deploy.Namespace)
+	if err != nil {
+		logger.Error(err, "Failed to list IngressRouteTCPs")
+		return
+	}
+
+	if route, found := findIngressRouteOwnedByDeployment(ingressRoutes, deploy.Name); found {
+		return route, nil
+	}
+	//
+	// Create a new IngressRouteTCP for the Deployment
+	route, err = r.constructIngressRouteTCPForDeployment(ctx, deploy, port)
+	if err != nil {
+		logger.Error(err, "Failed to construct IngressRouteTCP for Deployment")
+		return
+	}
+
+	// Create the IngressRouteTCP in the cluster
+	if err = r.Create(ctx, route); err != nil {
+		logger.Error(err, "Failed to create IngressRouteTCP for Deployment")
+		return
+	}
+	return
+}
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
@@ -226,62 +291,18 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
-	// Check if a Service already exists for this Deployment
-	services, err := r.listServices(ctx, req.Namespace)
+	svc, err := r.setupService(ctx, deploy)
 	if err != nil {
-		logger.Error(err, "Failed to list Services")
+		logger.Error(err, "Failed to setup Service for Deployment")
 		return ctrl.Result{}, err
-	}
-
-	svc, found := findServiceOwnedByDeployment(services, deploy.Name)
-	if !found {
-		logger.Info("Service does not yet exist for Deployment, attempting to create")
-
-		// find an unused port for the deployment
-		newPort, err := findUnusedPort(services, 9618, 9628)
-		if err != nil {
-			logger.Error(err, "Failed to find an unused port for Deployment")
-			return ctrl.Result{}, err
-		}
-
-		svc, err = r.constructServiceForDeployment(ctx, deploy, newPort)
-		if err != nil {
-			logger.Error(err, "Failed to construct Service for Deployment")
-			return ctrl.Result{}, err
-		}
-
-		// Create the Service in the cluster
-		if err := r.Create(ctx, svc); err != nil {
-			logger.Error(err, "Failed to create Service for Deployment")
-			return ctrl.Result{}, err
-		}
 	}
 
 	// Key remaining port-facing actions based on the service's chosen port
 	svcPort := svc.Spec.Ports[0].Port
 
-	// Check if an IngressRouteTCP already exists for this Deployment
-	ingressRoutes, err := r.listIngressRouteTCPs(ctx, req.Namespace)
-	if err != nil {
-		logger.Error(err, "Failed to list IngressRouteTCPs")
+	if _, err = r.setupIngressRouteTCP(ctx, deploy, svcPort); err != nil {
+		logger.Error(err, "Failed to setup IngressRouteTCP for Deployment")
 		return ctrl.Result{}, err
-	}
-
-	_, found = findIngressRouteOwnedByDeployment(ingressRoutes, req.Name)
-	if !found {
-		// Create a new IngressRouteTCP for the Deployment
-		route, err := r.constructIngressRouteTCPForDeployment(ctx, deploy, svcPort)
-		if err != nil {
-			logger.Error(err, "Failed to construct IngressRouteTCP for Deployment")
-			return ctrl.Result{}, err
-		}
-
-		// Create the IngressRouteTCP in the cluster
-		if err := r.Create(ctx, route); err != nil {
-			logger.Error(err, "Failed to create IngressRouteTCP for Deployment")
-			return ctrl.Result{}, err
-		}
-
 	}
 
 	// Annotate the Deployment with the assigned port
