@@ -21,16 +21,25 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"os"
+
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
-// GroupVersion is the API group and version for Traefik's IngressRouteTCP CRD.
-var GroupVersion = schema.GroupVersion{Group: "traefik.io", Version: "v1alpha1"}
+// We need to support both the "traefik.containo.us/v1alpha1" and "traefik.io/v1alpha1" group versions.
+func getTraefikGroupVersion() schema.GroupVersion {
+	// Check if the "traefik.containo.us/v1alpha1" group version is present in the environment.
+	if group, exists := os.LookupEnv("TRAEFIK_GROUP_VERSION"); exists {
+		return schema.GroupVersion{Group: group, Version: "v1alpha1"}
+	}
+	// Default to the "traefik.io/v1alpha1" group version.
+	return schema.GroupVersion{Group: "traefik.io", Version: "v1alpha1"}
+}
 
 var (
 	// SchemeBuilder registers the types in this package with a runtime.Scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	SchemeBuilder = &scheme.Builder{GroupVersion: getTraefikGroupVersion()}
 
 	// AddToScheme adds the types in this package to a runtime.Scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
