@@ -35,6 +35,7 @@ import (
 
 // DeploymentReconciler reconciles a Deployment object
 type DeploymentReconciler struct {
+	CollectorClient
 	client.Client
 	Scheme *runtime.Scheme
 }
@@ -302,6 +303,14 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	if _, err = r.setupIngressRouteTCP(ctx, deploy, svcPort); err != nil {
 		logger.Error(err, "Failed to setup IngressRouteTCP for Deployment")
+		return ctrl.Result{}, err
+	}
+
+	// External side effect: Advertise the decided port to a local HTCondor collector
+	// Do not mark port assignment as complete until advertisement succeeds, so that
+	// the Deployment will be retried if the advertisement fails
+	if err = r.CollectorClient.AdvertiseDeploymentPort(ctx, req.NamespacedName, svcPort); err != nil {
+		logger.Error(err, "Failed to advertise Deployment port to local collector")
 		return ctrl.Result{}, err
 	}
 

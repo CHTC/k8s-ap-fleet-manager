@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -30,6 +31,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+// MockCollectorClient is a testify/mock stand-in for CollectorClient, so tests
+// don't reach out to a real HTCondor collector.
+type MockCollectorClient struct {
+	mock.Mock
+}
+
+func (m *MockCollectorClient) AdvertiseDeploymentPort(ctx context.Context, deployment types.NamespacedName, port int32) error {
+	args := m.Called(ctx, deployment, port)
+	return args.Error(0)
+}
 
 func makeDeployment(namespacedName types.NamespacedName) *appsv1.Deployment {
 	return &appsv1.Deployment{
@@ -103,9 +115,13 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 		})
 
 		It("should successfully reconcile the first resource", func() {
+			mockCollector := new(MockCollectorClient)
+			mockCollector.On("AdvertiseDeploymentPort", mock.Anything, namespacedName, mock.Anything).Return(nil)
+
 			reconciler := &DeploymentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+				CollectorClient: mockCollector,
 			}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: namespacedName,
@@ -131,12 +147,19 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 
 			By("Checking that the deployment and service select on the same pods")
 			Expect(updatedDeployment.Spec.Selector.MatchLabels).To(Equal(expectedService.Spec.Selector))
+
+			By("Checking that the collector was advertised the assigned port")
+			mockCollector.AssertExpectations(GinkgoT())
 		})
 
 		It("Should successfully reconcile the second resource on a different port", func() {
+			mockCollector := new(MockCollectorClient)
+			mockCollector.On("AdvertiseDeploymentPort", mock.Anything, namespacedName2, mock.Anything).Return(nil)
+
 			reconciler := &DeploymentReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+				CollectorClient: mockCollector,
 			}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: namespacedName2,
@@ -153,6 +176,9 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(services.Items).To(HaveLen(2))
 			Expect(services.Items[0].Spec.Ports[0].Port).NotTo(Equal(services.Items[1].Spec.Ports[0].Port))
+
+			By("Checking that the collector was advertised the assigned port")
+			mockCollector.AssertExpectations(GinkgoT())
 		})
 	})
 })

@@ -55,8 +55,9 @@ func main() {
 	}
 
 	if err := (&controller.DeploymentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		CollectorClient: controller.NewCollectorClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "deployment")
 		os.Exit(1)
