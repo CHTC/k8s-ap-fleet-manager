@@ -87,7 +87,8 @@ func (c *_collectorClient) InvalidateDeploymentPort(ctx context.Context, deploym
 	inv := classad.New()
 	inv.Set("MyType", "Query")
 	inv.Set("TargetType", "Generic")
-	inv.Set("Requirements", fmt.Sprintf(`Name == "%s" && Namespace == "%s"`, deployment.Name, deployment.Namespace))
+	inv.Set("Name", deployment.Name)
+	inv.Set("Requirements", fmt.Sprintf(`Name == "%s"`, deployment.Name))
 
 	if err := collector.Advertise(ctx, inv, &htcondor.AdvertiseOptions{
 		Command: commands.INVALIDATE_ADS_GENERIC,

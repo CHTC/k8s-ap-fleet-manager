@@ -342,7 +342,14 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Annotate the Deployment with the assigned port and add a finalizer
-	// TODO this isn't atomic, we can create the port and then fail to annotate the deployment
+	hasPortAnnotation := deploy.Annotations[PORT_TAG] != ""
+	hasFinalizer := slices.Contains(deploy.Finalizers, PORT_FINALIZER)
+
+	if hasPortAnnotation && hasFinalizer {
+		logger.Info("Deployment already annotated with assigned port and finalizer, skipping patch")
+		return ctrl.Result{}, nil
+	}
+
 	patch := client.MergeFrom(deploy.DeepCopy())
 	deploy.Annotations[PORT_TAG] = fmt.Sprintf("%d", svcPort)
 	deploy.Finalizers = append(deploy.Finalizers, PORT_FINALIZER)
