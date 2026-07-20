@@ -43,6 +43,11 @@ func (m *MockCollectorClient) AdvertiseDeploymentPort(ctx context.Context, deplo
 	return args.Error(0)
 }
 
+func (m *MockCollectorClient) InvalidateDeploymentPort(ctx context.Context, deployment types.NamespacedName) error {
+	args := m.Called(ctx, deployment)
+	return args.Error(0)
+}
+
 func makeDeployment(namespacedName types.NamespacedName) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -106,17 +111,12 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 		})
 
 		AfterAll(func() {
-			By("Deleting the annotated Deployment")
-			resource := &appsv1.Deployment{}
-			err := k8sClient.Get(ctx, namespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-			err = k8sClient.Delete(ctx, resource)
-			Expect(err).NotTo(HaveOccurred())
+			// All cleanup is handled within tests
 		})
 
 		It("should successfully reconcile the first resource", func() {
 			mockCollector := new(MockCollectorClient)
-			mockCollector.On("AdvertiseDeploymentPort", mock.Anything, namespacedName, mock.Anything).Return(nil)
+			mockCollector.On("AdvertiseDeploymentPort", ctx, namespacedName, int32(9618)).Return(nil)
 
 			reconciler := &DeploymentReconciler{
 				Client:          k8sClient,
@@ -128,13 +128,14 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Checking if the Deployment has been annotated with a port")
+			By("Checking if the Deployment has been annotated with a port and finalizer")
 			updatedDeployment := &appsv1.Deployment{}
 			err = k8sClient.Get(ctx, namespacedName, updatedDeployment)
 			Expect(err).NotTo(HaveOccurred())
 			portAnnotation, exists := updatedDeployment.Annotations[PORT_TAG]
 			Expect(exists).To(BeTrue())
 			Expect(portAnnotation).NotTo(BeEmpty())
+			Expect(updatedDeployment.Finalizers).To(HaveLen(1))
 
 			By("Checking if the corresponding Service has been created")
 			expectedService := &corev1.Service{}
@@ -154,7 +155,7 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 
 		It("Should successfully reconcile the second resource on a different port", func() {
 			mockCollector := new(MockCollectorClient)
-			mockCollector.On("AdvertiseDeploymentPort", mock.Anything, namespacedName2, mock.Anything).Return(nil)
+			mockCollector.On("AdvertiseDeploymentPort", ctx, namespacedName2, int32(9619)).Return(nil)
 
 			reconciler := &DeploymentReconciler{
 				Client:          k8sClient,
@@ -179,6 +180,35 @@ var _ = Describe("Deployment Controller", Ordered, func() {
 
 			By("Checking that the collector was advertised the assigned port")
 			mockCollector.AssertExpectations(GinkgoT())
+		})
+
+		It("Should invalidate the deployment's ad and remove its finalizer upon deletion", func() {
+			mockCollector := new(MockCollectorClient)
+			mockCollector.On("InvalidateDeploymentPort", ctx, namespacedName).Return(nil)
+
+			By("Deleting the first deployment")
+			deployment := &appsv1.Deployment{}
+			err := k8sClient.Get(ctx, namespacedName, deployment)
+			Expect(err).NotTo(HaveOccurred())
+			err = k8sClient.Delete(ctx, deployment)
+			Expect(err).NotTo(HaveOccurred())
+			reconciler := &DeploymentReconciler{
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
+				CollectorClient: mockCollector,
+			}
+			By("Re-reconciling the deployment to remove its finalizer")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: namespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking that the ad was removed from the collector")
+			mockCollector.AssertExpectations(GinkgoT())
+
+			By("Checking that the Deployment was deleted successfully after its finalizer was removed")
+			err = k8sClient.Get(ctx, namespacedName, deployment)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 	})
 })

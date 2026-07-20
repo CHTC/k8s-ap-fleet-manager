@@ -59,6 +59,8 @@ const PORT_SERVICE_NAME = "ap-port-%v"
 // Name (and entryPoint) given to the IngressRouteTCP created for a personal AP's port
 const INGRESS_ROUTE_TCP_NAME = "personal-ap-%v"
 
+const PORT_FINALIZER = "chtc.wisc.edu/ap-port-finalizer"
+
 func (r *DeploymentReconciler) constructServiceForDeployment(ctx context.Context, deploy *appsv1.Deployment, port int32) (*corev1.Service, error) {
 	// Base service spec: target the deployment's pods using its template labels, and expose the specified port
 	svc := &corev1.Service{
@@ -260,6 +262,30 @@ func (r *DeploymentReconciler) setupIngressRouteTCP(ctx context.Context, deploy 
 	return
 }
 
+func (r *DeploymentReconciler) cleanupCollectorAd(ctx context.Context, deployment appsv1.Deployment, req ctrl.Request) error {
+	logger := logf.FromContext(ctx)
+	logger.Info("Deployment is being deleted, cleaning up port assignment")
+	if err := r.CollectorClient.InvalidateDeploymentPort(ctx, req.NamespacedName); err != nil {
+		logger.Error(err, "Failed to invalidate Deployment port in local collector")
+		return err
+	}
+
+	// unset the finalizer on the Deployment to allow deletion to proceed
+	idx := slices.Index(deployment.Finalizers, PORT_FINALIZER)
+	if idx == -1 {
+		logger.Info("Finalizer not found on Deployment, skipping removal")
+		return nil
+	}
+
+	patch := client.MergeFrom(deployment.DeepCopy())
+	deployment.Finalizers = append(deployment.Finalizers[:idx], deployment.Finalizers[idx+1:]...)
+	if err := r.Patch(ctx, &deployment, patch); err != nil {
+		logger.Error(err, "Failed to remove finalizer from Deployment")
+		return err
+	}
+	return nil
+}
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
@@ -276,19 +302,20 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if deploy.DeletionTimestamp != nil {
-		logger.Info("Deployment is being deleted, skipping reconciliation")
+		if !slices.Contains(deploy.Finalizers, PORT_FINALIZER) {
+			logger.Info("Deployment is being deleted, skipping reconciliation")
+			return ctrl.Result{}, nil
+		}
+		if err := r.cleanupCollectorAd(ctx, *deploy, req); err != nil {
+			logger.Error(err, "Failed to cleanup collector advertisement for Deployment")
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, nil
 	}
 
 	// Check if the Deployment has the AP_TAG label
 	if tag, ok := deploy.Annotations[AP_TAG]; !ok || tag != "true" {
 		logger.Info("Deployment does not have the AP_TAG label, skipping reconciliation")
-		return ctrl.Result{}, nil
-	}
-
-	// Check if the Deployment has been assigned a port by looking for the "port" annotation
-	if port, ok := deploy.Annotations[PORT_TAG]; ok && port != "" {
-		logger.Info("Deployment already has a port assigned, skipping reconciliation", "port", port)
 		return ctrl.Result{}, nil
 	}
 
@@ -314,10 +341,11 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Annotate the Deployment with the assigned port
+	// Annotate the Deployment with the assigned port and add a finalizer
 	// TODO this isn't atomic, we can create the port and then fail to annotate the deployment
 	patch := client.MergeFrom(deploy.DeepCopy())
 	deploy.Annotations[PORT_TAG] = fmt.Sprintf("%d", svcPort)
+	deploy.Finalizers = append(deploy.Finalizers, PORT_FINALIZER)
 	if err := r.Patch(ctx, deploy, patch); err != nil {
 		logger.Error(err, "Failed to annotate Deployment with assigned port")
 		return ctrl.Result{}, err

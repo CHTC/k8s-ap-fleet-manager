@@ -2,9 +2,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/PelicanPlatform/classad/classad"
+	"github.com/bbockelm/cedar/commands"
 	htcondor "github.com/bbockelm/golang-htcondor"
 	htConfig "github.com/bbockelm/golang-htcondor/config"
 	"k8s.io/apimachinery/pkg/types"
@@ -14,6 +16,9 @@ import (
 type CollectorClient interface {
 	// AdvertiseDeploymentPort advertises the deployment's chosen port to the local HTCondor collector.
 	AdvertiseDeploymentPort(ctx context.Context, deployment types.NamespacedName, port int32) error
+
+	// InvalidateDeploymentPort invalidates the deployment's advertised port in the local HTCondor collector.
+	InvalidateDeploymentPort(ctx context.Context, deployment types.NamespacedName) error
 }
 
 type _collectorClient struct {
@@ -64,6 +69,30 @@ func (c *_collectorClient) AdvertiseDeploymentPort(ctx context.Context, deployme
 
 	if err := collector.Advertise(adCtx, ad, nil); err != nil {
 		logger.Error(err, "failed to advertise deployment port")
+		return err
+	}
+	return nil
+}
+
+func (c *_collectorClient) InvalidateDeploymentPort(ctx context.Context, deployment types.NamespacedName) error {
+	logger := logf.FromContext(ctx)
+	logger.Info("invalidating deployment port ad in local collector", "deployment", deployment)
+
+	collector, err := c.initCollector(ctx)
+	if err != nil {
+		logger.Error(err, "failed to initialize HTCondor collector")
+		return err
+	}
+
+	inv := classad.New()
+	inv.Set("MyType", "Query")
+	inv.Set("TargetType", "Generic")
+	inv.Set("Requirements", fmt.Sprintf(`Name == "%s" && Namespace == "%s"`, deployment.Name, deployment.Namespace))
+
+	if err := collector.Advertise(ctx, inv, &htcondor.AdvertiseOptions{
+		Command: commands.INVALIDATE_ADS_GENERIC,
+	}); err != nil {
+		logger.Error(err, "Failed to send invalidate query")
 		return err
 	}
 	return nil
