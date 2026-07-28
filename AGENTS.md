@@ -7,7 +7,7 @@ There is no `PROJECT` file, no `controller-gen`, and no CRDs. Everything under `
 is hand-written and hand-maintained.
 
 ```
-cmd/main.go                    Manager entry (registers the Deployment controller)
+cmd/controller/main.go                    Manager entry (registers the Deployment controller)
 internal/controller/*          Reconciliation logic (watches built-in apps/v1 Deployments)
 config/*.yaml                  Flat, hand-maintained Kubernetes manifests (Namespace, RBAC, Deployment)
 config/kustomization.yaml      Namespace/name-prefix + resource list for `make deploy`/`make build-installer`

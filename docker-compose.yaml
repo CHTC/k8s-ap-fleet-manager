@@ -3,4 +3,9 @@ services:
     image: hub.osg-htc.org/mwestphall/fleet-manager:latest
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: controller.Dockerfile
+  fleet-manager-client:
+    image: hub.osg-htc.org/mwestphall/fleet-manager-client:latest
+    build:
+      context: .
+      dockerfile: client.Dockerfile
