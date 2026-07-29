@@ -2,4 +2,9 @@ namespace: applications
 resources:
   - namespace.yaml
   - deployment-1.yaml
-  - deployment-2.yaml
+#  - deployment-2.yaml
+
+configMapGenerator:
+  - name: fleet-manager-client-config
+    files:
+      - 21-fleetmand.conf

@@ -35,12 +35,9 @@ spec:
           value: "9618"
         - name: PORT_ALLOCATION_MAX
           value: "9628"
-        securityContext:
-          # readOnlyRootFilesystem: true
-          # allowPrivilegeEscalation: false
-          # capabilities:
-          #   drop:
-          #   - "ALL"
+        ports:
+          - containerPort: 9618
+            protocol: TCP
         resources:
           limits:
             cpu: 500m

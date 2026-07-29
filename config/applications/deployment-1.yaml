@@ -1,19 +1,39 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-1
+  name: fleetman-client-1
   annotations:
     "chtc.wisc.edu/personal-ap": "true"
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: nginx-1
+      app: fleetman-client-1
   template:
     metadata:
       labels:
-        app: nginx-1
+        app: fleetman-client-1
     spec:
       containers:
-      - name: nginx
-        image: nginx:latest
+      - name: fleet-manager-client
+        image: hub.osg-htc.org/mwestphall/fleet-manager-client:latest
+        imagePullPolicy: Never
+        env:
+        - name: _CONDOR_FLEETMAND_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: _CONDOR_FLEETMAND_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: _CONDOR_FLEETMAND_COLLECTOR_ADDRESS
+          value: "fleet-manager-controller.fleet-manager-system.svc.cluster.local:9618"
+        volumeMounts:
+        - name: fleet-manager-client-config
+          mountPath: /etc/condor/config.d/21-fleetmand.conf
+          subPath: 21-fleetmand.conf
+      volumes:
+        - name: fleet-manager-client-config
+          configMap:
+            name: fleet-manager-client-config
