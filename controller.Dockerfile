@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM htcondor/base:25.11.0-el9
+FROM htcondor/base:25.x-el9
 WORKDIR /
 COPY htcondor/controller/etc/supervisord.conf /etc/
 COPY htcondor/controller/config.d/* /etc/condor/config.d/
