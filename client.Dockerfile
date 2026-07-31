@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o fl
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 # TODO this is a workaround for 25.12.2 FS auth issues with the go client.
-FROM htcondor/base:25.11.0-el9
+FROM htcondor/base:25.x-el9
 WORKDIR /
 COPY htcondor/client/config.d/* /etc/condor/config.d/
 

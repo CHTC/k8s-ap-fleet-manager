@@ -63,6 +63,7 @@ func (c *_collectorClient) AdvertiseDeploymentPort(ctx context.Context, deployme
 	ad.Set("Name", deployment.Name)
 	ad.Set("Namespace", deployment.Namespace)
 	ad.Set("Port", port)
+	ad.Set("ClassAdLifetime", 3600*24*365) // Set long lifetime for ad. Ads are removed manually via invalidation.
 
 	adCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
