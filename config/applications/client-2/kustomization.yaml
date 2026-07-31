@@ -1,0 +1,8 @@
+nameSuffix: "-2"
+labels:
+  - pairs:
+      app: fleetman-client-2
+    includeTemplates: true
+    includeSelectors: true
+resources:
+  - ../client-base/

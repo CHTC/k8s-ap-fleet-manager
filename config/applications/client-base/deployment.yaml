@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fleetman-client-1
+  name: fleetman-client
   annotations:
     "chtc.wisc.edu/personal-ap": "true"
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: fleetman-client-1
+      app: fleetman-client
   template:
     metadata:
       labels:
-        app: fleetman-client-1
+        app: fleetman-client
     spec:
       containers:
       - name: fleet-manager-client
@@ -22,18 +22,10 @@ spec:
         - name: _CONDOR_FLEETMAND_NAME
           valueFrom:
             fieldRef:
-              fieldPath: metadata.name
+              fieldPath: metadata.labels['app']
         - name: _CONDOR_FLEETMAND_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
         - name: _CONDOR_FLEETMAND_COLLECTOR_ADDRESS
           value: "fleet-manager-controller.fleet-manager-system.svc.cluster.local:9618"
-        volumeMounts:
-        - name: fleet-manager-client-config
-          mountPath: /etc/condor/config.d/21-fleetmand.conf
-          subPath: 21-fleetmand.conf
-      volumes:
-        - name: fleet-manager-client-config
-          configMap:
-            name: fleet-manager-client-config
